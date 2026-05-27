@@ -1,0 +1,722 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#f59e0b">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Beer Catcher">
+<meta name="mobile-web-app-capable" content="yes">
+
+<!--
+  PWA Setup:
+  1. manifest.json should be placed at root: /manifest.json
+  2. sw.js should be placed at root: /sw.js
+  3. Icons referenced in manifest.json should be in /icons/
+-->
+
+<link rel="manifest" href="manifest.json">
+<title>Beer Catcher Game</title>
+<style>
+    * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+        -webkit-tap-highlight-color: transparent;
+        user-select: none;
+        -webkit-user-select: none;
+    }
+
+    :root {
+        --bg1: #87CEEB;
+        --bg2: #B0E0E6;
+        --accent: #FF6B6B;
+        --accent2: #4ECDC4;
+        --gold: #FFD700;
+        --text: #2C3E50;
+        --shadow: rgba(0,0,0,0.15);
+    }
+
+    html, body {
+        overscroll-behavior: none;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    body {
+        font-family: 'Arial Rounded MT Bold', Arial, sans-serif;
+        background: linear-gradient(180deg, var(--bg1) 0%, var(--bg2) 100%);
+        overflow: hidden;
+        touch-action: none;
+        height: 100vh;
+        height: 100dvh;
+        width: 100vw;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        position: fixed;
+    }
+
+    #gameContainer {
+        position: relative;
+        width: 100%;
+        height: 100%;
+        max-width: 600px;
+        max-height: 900px;
+        background: linear-gradient(180deg, #87CEEB 0%, #E0F6FF 100%);
+        overflow: hidden;
+        box-shadow: 0 20px 60px var(--shadow);
+    }
+
+    @media (min-width: 601px) {
+        #gameContainer {
+            border-radius: 24px;
+            border: 4px solid #fff;
+        }
+    }
+
+    @media (display-mode: standalone) {
+        body {
+            padding-top: env(safe-area-inset-top);
+            padding-bottom: env(safe-area-inset-bottom);
+        }
+    }
+
+    /* Clouds */
+    .cloud {
+        position: absolute;
+        background: white;
+        border-radius: 100px;
+        opacity: 0.6;
+        animation: float 20s infinite linear;
+    }
+
+    .cloud::before,
+    .cloud::after {
+        content: '';
+        position: absolute;
+        background: white;
+        border-radius: 100px;
+    }
+
+    .cloud1 {
+        width: 80px;
+        height: 30px;
+        top: 10%;
+        left: -100px;
+        animation-duration: 25s;
+    }
+
+    .cloud1::before {
+        width: 50px;
+        height: 40px;
+        top: -20px;
+        left: 15px;
+    }
+
+    .cloud1::after {
+        width: 60px;
+        height: 30px;
+        top: -10px;
+        right: 10px;
+    }
+
+    .cloud2 {
+        width: 60px;
+        height: 25px;
+        top: 20%;
+        left: -80px;
+        animation-duration: 30s;
+        animation-delay: -10s;
+    }
+
+    .cloud2::before {
+        width: 40px;
+        height: 30px;
+        top: -15px;
+        left: 10px;
+    }
+
+    @keyframes float {
+        to { transform: translateX(calc(100vw + 200px)); }
+    }
+
+    /* Game Area */
+    #gameCanvas {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        pointer-events: none;
+    }
+
+    /* Input Layer - captures all touch/mouse input */
+    #inputLayer {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        z-index: 20;
+        touch-action: none;
+        cursor: pointer;
+        background: transparent;
+    }
+
+    /* UI Elements */
+    #hud {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        padding: 20px 16px;
+        padding-top: calc(20px + env(safe-area-inset-top));
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        z-index: 10;
+        pointer-events: none;
+        gap: 8px;
+    }
+
+    .score-box {
+        background: rgba(255, 255, 255, 0.95);
+        padding: 12px 18px;
+        border-radius: 50px;
+        box-shadow: 0 4px 15px var(--shadow);
+        backdrop-filter: blur(10px);
+        transform: scale(1);
+        transition: transform 0.2s ease, background 0.3s ease;
+        min-width: 80px;
+        text-align: center;
+    }
+
+    .score-box.pop {
+        transform: scale(1.15);
+    }
+
+    .score-box.glow {
+        background: linear-gradient(135deg, rgba(255, 215, 0, 0.3) 0%, rgba(255, 255, 255, 0.95) 100%);
+        box-shadow: 0 4px 20px rgba(255, 215, 0, 0.5);
+    }
+
+    #score, #lives, #level {
+        font-size: 24px;
+        font-weight: 900;
+        color: var(--accent);
+        text-shadow: 2px 2px 0px rgba(255,255,255,0.8);
+    }
+
+    #lives {
+        color: #e74c3c;
+    }
+
+    #level {
+        color: var(--accent2);
+        font-size: 16px;
+    }
+
+    .score-label {
+        font-size: 11px;
+        color: var(--text);
+        opacity: 0.7;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+    }
+
+    /* Special mug indicator */
+    #specialIndicator {
+        position: absolute;
+        top: 150px;
+        top: calc(150px + env(safe-area-inset-top));
+        left: 50%;
+        transform: translateX(-50%);
+        background: linear-gradient(135deg, var(--gold) 0%, #FFA500 100%);
+        color: #2C3E50;
+        padding: 8px 20px;
+        border-radius: 50px;
+        font-weight: 900;
+        font-size: 14px;
+        box-shadow: 0 4px 15px rgba(255, 215, 0, 0.6);
+        z-index: 12;
+        pointer-events: none;
+        opacity: 0;
+        transition: opacity 0.3s ease;
+        animation: pulse 1s ease-in-out infinite;
+    }
+
+    #specialIndicator.show {
+        opacity: 1;
+    }
+
+    @keyframes pulse {
+        0%, 100% { transform: translateX(-50%) scale(1); }
+        50% { transform: translateX(-50%) scale(1.05); }
+    }
+
+    /* Mute Button */
+    #muteBtn {
+        position: absolute;
+        top: 90px;
+        top: calc(90px + env(safe-area-inset-top));
+        right: 16px;
+        right: calc(16px + env(safe-area-inset-right));
+        width: 48px;
+        height: 48px;
+        background: rgba(255, 255, 255, 0.95);
+        border: none;
+        border-radius: 50%;
+        cursor: pointer;
+        z-index: 25;
+        box-shadow: 0 4px 15px var(--shadow);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 24px;
+        transition: all 0.2s ease;
+        pointer-events: auto;
+    }
+
+    #muteBtn:hover {
+        transform: scale(1.1);
+    }
+
+    #muteBtn:active {
+        transform: scale(0.95);
+    }
+
+    /* Screens */
+    .screen {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(255, 255, 255, 0.98);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        z-index: 100;
+        padding: 20px;
+        padding-top: calc(20px + env(safe-area-inset-top));
+        padding-bottom: calc(20px + env(safe-area-inset-bottom));
+        text-align: center;
+        transition: opacity 0.3s ease, transform 0.3s ease;
+        pointer-events: auto;
+    }
+
+    .screen.hidden {
+        opacity: 0;
+        pointer-events: none;
+        transform: scale(0.95);
+    }
+
+    .title {
+        font-size: clamp(36px, 8vw, 56px);
+        font-weight: 900;
+        background: linear-gradient(135deg, var(--accent) 0%, var(--accent2) 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+        margin-bottom: 16px;
+        animation: bounce 2s ease-in-out infinite;
+    }
+
+    @keyframes bounce {
+        0%, 100% { transform: translateY(0); }
+        50% { transform: translateY(-10px); }
+    }
+
+    .subtitle {
+        font-size: clamp(14px, 3vw, 18px);
+        color: var(--text);
+        opacity: 0.7;
+        margin-bottom: 32px;
+        max-width: 400px;
+        line-height: 1.5;
+    }
+
+    .btn {
+        background: linear-gradient(135deg, var(--accent) 0%, #FF8E8E 100%);
+        color: white;
+        border: none;
+        padding: 18px 48px;
+        font-size: 20px;
+        font-weight: 700;
+        border-radius: 50px;
+        cursor: pointer;
+        box-shadow: 0 8px 20px rgba(255, 107, 107, 0.4);
+        transition: all 0.2s ease;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        pointer-events: auto;
+    }
+
+    .btn:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 12px 25px rgba(255, 107, 107, 0.5);
+    }
+
+    .btn:active {
+        transform: translateY(0);
+    }
+
+    #finalScore, #finalLives {
+        font-size: clamp(36px, 10vw, 56px);
+        font-weight: 900;
+        color: var(--accent);
+        margin: 8px 0;
+        text-shadow: 3px 3px 0px rgba(0,0,0,0.1);
+    }
+
+    #finalLives {
+        color: #e74c3c;
+        font-size: clamp(24px, 8vw, 36px);
+    }
+
+    .emoji {
+        font-size: 64px;
+        margin-bottom: 16px;
+        animation: shake 0.5s ease infinite;
+    }
+
+    @keyframes shake {
+        0%, 100% { transform: rotate(0deg); }
+        25% { transform: rotate(-5deg); }
+        75% { transform: rotate(5deg); }
+    }
+
+    .controls-hint {
+        margin-top: 24px;
+        padding: 16px;
+        background: rgba(78, 205, 196, 0.1);
+        border-radius: 16px;
+        font-size: 14px;
+        color: var(--text);
+        display: flex;
+        gap: 24px;
+        align-items: center;
+        justify-content: center;
+        flex-wrap: wrap;
+    }
+
+    .key {
+        display: inline-block;
+        padding: 6px 12px;
+        background: white;
+        border: 2px solid var(--accent2);
+        border-radius: 8px;
+        font-weight: 700;
+        box-shadow: 0 2px 0 var(--accent2);
+    }
+
+    .special-info {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-top: 12px;
+        color: #D4A017;
+        font-weight: 700;
+    }
+
+    /* Ground */
+    #ground {
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        width: 100%;
+        height: 60px;
+        background: linear-gradient(180deg, #7BC67B 0%, #4A9B4A 100%);
+        z-index: 5;
+        box-shadow: 0 -4px 10px var(--shadow);
+    }
+
+    #ground::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 20px;
+        background: repeating-linear-gradient(
+            90deg,
+            #5FB45F 0px,
+            #5FB45F 10px,
+            #7BC67B 10px,
+            #7BC67B 20px
+        );
+    }
+</style>
+</head>
+<body>
+<div id="gameContainer">
+    <!-- Animated clouds -->
+    <div class="cloud cloud1"></div>
+    <div class="cloud cloud2"></div>
+    
+    <!-- Ground -->
+    <div id="ground"></div>
+    
+    <!-- Game Canvas -->
+    <canvas id="gameCanvas"></canvas>
+    
+    <!-- Input Layer - captures all touch/mouse input -->
+    <div id="inputLayer"></div>
+    
+    <!-- HUD -->
+    <div id="hud">
+        <div class="score-box">
+            <div class="score-label">Bevute</div>
+            <div id="score">0</div>
+        </div>
+        <div class="score-box">
+            <div class="score-label">Vite</div>
+            <div id="lives">3/3</div>
+        </div>
+        <div class="score-box">
+            <div class="score-label">Velocità</div>
+            <div id="level">1x</div>
+        </div>
+    </div>
+
+    <!-- Special Mug Indicator -->
+    <div id="specialIndicator">✨ GOLDEN MUG! ✨</div>
+
+    <!-- Mute Button -->
+    <button id="muteBtn" aria-label="Toggle Sound">🔊</button>
+    
+    <!-- Start Screen -->
+    <div id="startScreen" class="screen">
+        <div class="emoji">🍺</div>
+        <h1 class="title">Beer Catcher</h1>
+        <p class="subtitle">Prendi le birre che cadono! Hai 3 vite. Ogni 10 bevute aumenta la velocità!</p>
+        <p class="special-info">⭐ I Boccali Dorati ripristinano 1 vita se li prendi. Se cadono non perdi vite!</p>
+        <button class="btn" id="startBtn">Inizia</button>
+        <div class="controls-hint">
+            <span><span class="key">←</span> <span class="key">→</span> Frecce</span>
+            <span>📱 Touch & Trascina</span>
+        </div>
+    </div>
+    
+    <!-- Game Over Screen -->
+    <div id="gameOverScreen" class="screen hidden">
+        <div class="emoji">😵</div>
+        <h1 class="title">Game Over!</h1>
+        <div id="finalScore">0</div>
+        <div id="finalLives">0 Vite Rimaste</div>
+        <p class="subtitle">Vite esaurite!</p>
+        <button class="btn" id="restartBtn">Gioca Ancora</button>
+    </div>
+</div>
+
+<script>
+    // PWA: Register Service Worker
+    // Place sw.js at root directory alongside this HTML file
+    if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+            navigator.serviceWorker.register('/sw.js').then(registration => {
+                console.log('SW registered:', registration);
+            }).catch(err => {
+                console.log('SW registration failed:', err);
+            });
+        });
+    }
+
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const container = document.getElementById('gameContainer');
+    const inputLayer = document.getElementById('inputLayer');
+    const muteBtn = document.getElementById('muteBtn');
+    const specialIndicator = document.getElementById('specialIndicator');
+    
+    let gameState = 'start'; // start, playing, gameover
+    let score = 0;
+    let maxLives = 3;
+    let currentLives = maxLives;
+    const BASE_SPEED = 2;
+    let baseSpeed = BASE_SPEED;
+    let currentSpeed = BASE_SPEED;
+    let beers = [];
+    let particles = [];
+    let player = {
+        x: 0,
+        y: 0,
+        width: 80,
+        height: 60,
+        targetX: 0,
+        speed: 0.2,
+        colliderPadding: 4
+    };
+    let keys = { left: false, right: false };
+    let lastBeerSpawn = 0;
+    const BASE_SPAWN_INTERVAL = 1500;
+    let beerSpawnInterval = BASE_SPAWN_INTERVAL;
+    let animationId = null;
+    let specialMugChance = 0.08;
+    let specialIndicatorTimeout = null;
+    
+    // Debug flag to verify beer array only modified in updateBeers
+    let beersLastModifiedBy = null;
+
+    // Audio System using Web Audio API
+    let audioCtx = null;
+    let isMuted = false;
+
+    function initAudio() {
+        if (!audioCtx) {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+    }
+
+    function playGulpSound() {
+        if (isMuted || !audioCtx) return;
+        
+        const now = audioCtx.currentTime;
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        const filter = audioCtx.createBiquadFilter();
+        
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(300, now);
+        osc.frequency.exponentialRampToValueAtTime(150, now + 0.15);
+        
+        filter.type = 'lowpass';
+        filter.frequency.value = 800;
+        
+        gain.gain.setValueAtTime(0.3, now);
+        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.2);
+        
+        osc.connect(filter);
+        filter.connect(gain);
+        gain.connect(audioCtx.destination);
+        
+        osc.start(now);
+        osc.stop(now + 0.2);
+
+        const noise = audioCtx.createBufferSource();
+        const noiseBuffer = audioCtx.createBuffer(1, audioCtx.sampleRate * 0.1, audioCtx.sampleRate);
+        const noiseData = noiseBuffer.getChannelData(0);
+        for (let i = 0; i < noiseData.length; i++) {
+            noiseData[i] = (Math.random() - 0.5) * 0.3;
+        }
+        noise.buffer = noiseBuffer;
+        
+        const noiseGain = audioCtx.createGain();
+        noiseGain.gain.setValueAtTime(0.15, now + 0.05);
+        noiseGain.gain.exponentialRampToValueAtTime(0.01, now + 0.15);
+        
+        noise.connect(noiseGain);
+        noiseGain.connect(audioCtx.destination);
+        noise.start(now + 0.05);
+    }
+
+    function playBreakSound() {
+        if (isMuted || !audioCtx) return;
+        
+        const now = audioCtx.currentTime;
+        const noise = audioCtx.createBufferSource();
+        const noiseBuffer = audioCtx.createBuffer(1, audioCtx.sampleRate * 0.3, audioCtx.sampleRate);
+        const noiseData = noiseBuffer.getChannelData(0);
+        for (let i = 0; i < noiseData.length; i++) {
+            noiseData[i] = (Math.random() - 0.5) * Math.exp(-i / (noiseData.length * 0.3));
+        }
+        noise.buffer = noiseBuffer;
+        
+        const filter = audioCtx.createBiquadFilter();
+        filter.type = 'highpass';
+        filter.frequency.setValueAtTime(2000, now);
+        
+        const gain = audioCtx.createGain();
+        gain.gain.setValueAtTime(0.4, now);
+        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
+        
+        noise.connect(filter);
+        filter.connect(gain);
+        gain.connect(audioCtx.destination);
+        noise.start(now);
+        
+        const osc1 = audioCtx.createOscillator();
+        const osc2 = audioCtx.createOscillator();
+        const pingGain = audioCtx.createGain();
+        
+        osc1.type = 'sine';
+        osc1.frequency.setValueAtTime(2500, now);
+        osc1.frequency.exponentialRampToValueAtTime(1500, now + 0.1);
+        
+        osc2.type = 'sine';
+        osc2.frequency.setValueAtTime(3800, now);
+        osc2.frequency.exponentialRampToValueAtTime(2000, now + 0.08);
+        
+        pingGain.gain.setValueAtTime(0.2, now);
+        pingGain.gain.exponentialRampToValueAtTime(0.01, now + 0.15);
+        
+        osc1.connect(pingGain);
+        osc2.connect(pingGain);
+        pingGain.connect(audioCtx.destination);
+        
+        osc1.start(now);
+        osc2.start(now + 0.02);
+        osc1.stop(now + 0.15);
+        osc2.stop(now + 0.12);
+    }
+
+    function playPowerUpJingle() {
+        if (isMuted || !audioCtx) return;
+        
+        const now = audioCtx.currentTime;
+        const notes = [523.25, 659.25, 783.99, 1046.50];
+        const duration = 0.12;
+        
+        notes.forEach((freq, i) => {
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            const startTime = now + i * duration;
+            
+            osc.type = 'triangle';
+            osc.frequency.setValueAtTime(freq, startTime);
+            
+            gain.gain.setValueAtTime(0, startTime);
+            gain.gain.linearRampToValueAtTime(0.3, startTime + 0.02);
+            gain.gain.exponentialRampToValueAtTime(0.01, startTime + duration);
+            
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            
+            osc.start(startTime);
+            osc.stop(startTime + duration);
+        });
+
+        for (let i = 0; i < 3; i++) {
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            const startTime = now + 0.4 + i * 0.08;
+            
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(2000 + i * 400, startTime);
+            osc.frequency.exponentialRampToValueAtTime(3000 + i * 400, startTime + 0.1);
+            
+            gain.gain.setValueAtTime(0.2, startTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, startTime + 0.15);
+            
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            
+            osc.start(startTime);
+            osc.stop(startTime + 0.15);
+        }
+    }
+
+    muteBtn.addEventListener('click', () => {
+        isMuted = !isMuted;
+        muteBtn.textContent = isMuted ? '🔇' : '🔊';
+        if (!isMuted && !audioCtx) {
+            initAudio();
+        }
+    });
+    
+    function resizeCanvas() {
+        const rect = container.getBoundingClientRect();
+        canvas.width = rect.width;
+        canvas.
