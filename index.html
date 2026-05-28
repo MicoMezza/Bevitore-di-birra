@@ -1,23 +1,224 @@
-<!DOCTYPE html>
+    <!DOCTYPE html>
 <html lang="en">
 <head>
+<!-- Playables SDK -->
+<script>// Playables SDK v1.0.0
+// Game lifecycle bridge: rAF-based game-ready detection + event communication
+(function() {
+  'use strict';
+
+  // Idempotency: skip if already initialized (e.g., server-side injection
+  // followed by client-side inject-javascript via the Bloks webview component).
+  if (window.playablesSDK) return;
+
+  var HANDLER_NAME = 'playablesGameEventHandler';
+  var ANDROID_BRIDGE_NAME = '_MetaPlayablesBridge';
+  var RAF_FRAME_THRESHOLD = 3;
+
+  var gameReadySent = false;
+  var firstInteractionSent = false;
+  var errorSent = false;
+  var frameCount = 0;
+  var originalRAF = window.requestAnimationFrame;
+
+  // --- Transport Layer ---
+
+  function hasIOSBridge() {
+    return !!(window.webkit &&
+              window.webkit.messageHandlers &&
+              window.webkit.messageHandlers[HANDLER_NAME]);
+  }
+
+  function hasAndroidBridge() {
+    return !!(window[ANDROID_BRIDGE_NAME] &&
+              typeof window[ANDROID_BRIDGE_NAME].postEvent === 'function');
+  }
+
+  function isInIframe() {
+    return !!(window.parent && window.parent !== window);
+  }
+
+  function sendEvent(eventName, payload) {
+    var message = {
+      type: eventName,
+      payload: payload || {},
+      timestamp: Date.now()
+    };
+
+    if (hasIOSBridge()) {
+      try {
+        window.webkit.messageHandlers[HANDLER_NAME].postMessage(message);
+      } catch (e) { /* ignore */ }
+      return;
+    }
+
+    if (hasAndroidBridge()) {
+    try {
+      var p = payload || {};
+      p.__secureToken = window.__fbAndroidBridgeAuthToken || '';
+      p.timestamp = message.timestamp;
+      window[ANDROID_BRIDGE_NAME].postEvent(
+        eventName,
+        JSON.stringify(p)
+      );
+    } catch (e) { /* ignore */ }
+    return;
+  }
+
+    if (isInIframe()) {
+      try {
+        window.parent.postMessage(message, '*');
+      } catch (e) { /* ignore */ }
+      return;
+    }
+  }
+
+  // --- rAF Game-Ready Detection ---
+
+  function onFrame() {
+    if (gameReadySent) return;
+
+    frameCount++;
+    if (frameCount >= RAF_FRAME_THRESHOLD) {
+      gameReadySent = true;
+      sendEvent('game_ready', {
+        frame_count: frameCount,
+        detected_at: Date.now()
+      });
+      return;
+    }
+
+    originalRAF.call(window, onFrame);
+  }
+
+  if (originalRAF) {
+    window.requestAnimationFrame = function(callback) {
+      if (!gameReadySent) {
+        return originalRAF.call(window, function(timestamp) {
+          frameCount++;
+          if (frameCount >= RAF_FRAME_THRESHOLD && !gameReadySent) {
+            gameReadySent = true;
+            sendEvent('game_ready', {
+              frame_count: frameCount,
+              detected_at: Date.now()
+            });
+          }
+          callback(timestamp);
+        });
+      }
+      return originalRAF.call(window, callback);
+    };
+  }
+
+  // --- First User Interaction Detection ---
+
+  function setupFirstInteractionDetection() {
+    var events = ['touchstart', 'mousedown', 'keydown'];
+
+    function onFirstInteraction() {
+      if (firstInteractionSent) return;
+      firstInteractionSent = true;
+      sendEvent('user_interaction_start', null);
+
+      for (var i = 0; i < events.length; i++) {
+        document.removeEventListener(events[i], onFirstInteraction, true);
+      }
+    }
+
+    for (var i = 0; i < events.length; i++) {
+      document.addEventListener(events[i], onFirstInteraction, true);
+    }
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', setupFirstInteractionDetection);
+  } else {
+    setupFirstInteractionDetection();
+  }
+
+  // --- Auto Error Capture ---
+
+  window.addEventListener('error', function(event) {
+    if (errorSent) return;
+    errorSent = true;
+    sendEvent('error', {
+      message: event.message || 'Unknown error',
+      source: event.filename || '',
+      lineno: event.lineno || 0,
+      colno: event.colno || 0,
+      auto_captured: true
+    });
+  });
+
+  window.addEventListener('unhandledrejection', function(event) {
+    if (errorSent) return;
+    errorSent = true;
+    var reason = event.reason;
+    sendEvent('error', {
+      message: (reason instanceof Error) ? reason.message : String(reason),
+      type: 'unhandled_promise_rejection',
+      auto_captured: true
+    });
+  });
+
+  // --- Public API ---
+
+  window.playablesSDK = {
+    complete: function(score) {
+      sendEvent('game_ended', {
+        score: score,
+        completed: true
+      });
+    },
+
+    error: function(message) {
+      if (errorSent) return;
+      errorSent = true;
+      sendEvent('error', {
+        message: message || 'Unknown error',
+        auto_captured: false
+      });
+    },
+
+    sendEvent: function(eventName, payload) {
+      if (!eventName || typeof eventName !== 'string') return;
+      sendEvent(eventName, payload);
+    }
+  };
+
+  // Kick off rAF detection in case no game code calls rAF immediately
+  if (originalRAF) {
+    originalRAF.call(window, onFrame);
+  }
+})();</script>
+<!-- PLAYABLE_TOUCH_PATCH_V1 --><script>
+(function() {
+  if (window.__playableTouchPatchInstalled) return;
+  window.__playableTouchPatchInstalled = true;
+  var origAdd = EventTarget.prototype.addEventListener;
+  var blockedTypes = { touchstart: 1, touchmove: 1, wheel: 1 };
+  EventTarget.prototype.addEventListener = function(type, listener, options) {
+    if (blockedTypes[type]) {
+      if (options === undefined || options === null) {
+        options = { passive: true };
+      } else if (typeof options === 'boolean') {
+        options = { capture: options, passive: true };
+      } else {
+        options = Object.assign({}, options, { passive: true });
+      }
+    }
+    return origAdd.call(this, type, listener, options);
+  };
+})();
+</script><script>window.Intl=window.Intl||{};Intl.t=function(s){return(Intl._locale&&Intl._locale[s])||s;};</script>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Beer Catcher Game</title>
+<link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#f59e0b">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Beer Catcher">
-<meta name="mobile-web-app-capable" content="yes">
-
-<!--
-  PWA Setup:
-  1. manifest.json should be placed at root: /manifest.json
-  2. sw.js should be placed at root: /sw.js
-  3. Icons referenced in manifest.json should be in /icons/
--->
-
-<link rel="manifest" href="manifest.json">
-<title>Beer Catcher Game</title>
 <style>
     * {
         margin: 0;
@@ -38,23 +239,16 @@
         --shadow: rgba(0,0,0,0.15);
     }
 
-    html, body {
-        overscroll-behavior: none;
-        -webkit-overflow-scrolling: touch;
-    }
-
     body {
         font-family: 'Arial Rounded MT Bold', Arial, sans-serif;
         background: linear-gradient(180deg, var(--bg1) 0%, var(--bg2) 100%);
         overflow: hidden;
         touch-action: none;
         height: 100vh;
-        height: 100dvh;
         width: 100vw;
         display: flex;
         align-items: center;
         justify-content: center;
-        position: fixed;
     }
 
     #gameContainer {
@@ -75,14 +269,6 @@
         }
     }
 
-    @media (display-mode: standalone) {
-        body {
-            padding-top: env(safe-area-inset-top);
-            padding-bottom: env(safe-area-inset-bottom);
-        }
-    }
-
-    /* Clouds */
     .cloud {
         position: absolute;
         background: white;
@@ -141,7 +327,6 @@
         to { transform: translateX(calc(100vw + 200px)); }
     }
 
-    /* Game Area */
     #gameCanvas {
         position: absolute;
         top: 0;
@@ -151,7 +336,6 @@
         pointer-events: none;
     }
 
-    /* Input Layer - captures all touch/mouse input */
     #inputLayer {
         position: absolute;
         top: 0;
@@ -164,14 +348,12 @@
         background: transparent;
     }
 
-    /* UI Elements */
     #hud {
         position: absolute;
         top: 0;
         left: 0;
         width: 100%;
         padding: 20px 16px;
-        padding-top: calc(20px + env(safe-area-inset-top));
         display: flex;
         justify-content: space-between;
         align-items: center;
@@ -225,11 +407,9 @@
         letter-spacing: 1px;
     }
 
-    /* Special mug indicator */
     #specialIndicator {
         position: absolute;
         top: 150px;
-        top: calc(150px + env(safe-area-inset-top));
         left: 50%;
         transform: translateX(-50%);
         background: linear-gradient(135deg, var(--gold) 0%, #FFA500 100%);
@@ -255,13 +435,10 @@
         50% { transform: translateX(-50%) scale(1.05); }
     }
 
-    /* Mute Button */
     #muteBtn {
         position: absolute;
         top: 90px;
-        top: calc(90px + env(safe-area-inset-top));
         right: 16px;
-        right: calc(16px + env(safe-area-inset-right));
         width: 48px;
         height: 48px;
         background: rgba(255, 255, 255, 0.95);
@@ -286,7 +463,6 @@
         transform: scale(0.95);
     }
 
-    /* Screens */
     .screen {
         position: absolute;
         top: 0;
@@ -300,8 +476,6 @@
         justify-content: center;
         z-index: 100;
         padding: 20px;
-        padding-top: calc(20px + env(safe-area-inset-top));
-        padding-bottom: calc(20px + env(safe-area-inset-bottom));
         text-align: center;
         transition: opacity 0.3s ease, transform 0.3s ease;
         pointer-events: auto;
@@ -352,6 +526,8 @@
         text-transform: uppercase;
         letter-spacing: 1px;
         pointer-events: auto;
+        position: relative;
+        z-index: 101;
     }
 
     .btn:hover {
@@ -421,7 +597,6 @@
         font-weight: 700;
     }
 
-    /* Ground */
     #ground {
         position: absolute;
         bottom: 0;
@@ -448,24 +623,57 @@
             #7BC67B 20px
         );
     }
+
+    #pwaPrompt {
+        position: fixed;
+        bottom: 20px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: white;
+        padding: 16px 24px;
+        border-radius: 16px;
+        box-shadow: 0 8px 24px rgba(0,0,0,0.2);
+        z-index: 200;
+        display: none;
+        align-items: center;
+        gap: 16px;
+        max-width: 90%;
+    }
+
+    #pwaPrompt.show {
+        display: flex;
+    }
+
+    #pwaPrompt button {
+        padding: 8px 16px;
+        border-radius: 8px;
+        border: none;
+        font-weight: 700;
+        cursor: pointer;
+    }
+
+    #installBtn {
+        background: var(--accent);
+        color: white;
+    }
+
+    #dismissBtn {
+        background: #e0e0e0;
+        color: var(--text);
+    }
 </style>
 </head>
 <body>
 <div id="gameContainer">
-    <!-- Animated clouds -->
     <div class="cloud cloud1"></div>
     <div class="cloud cloud2"></div>
     
-    <!-- Ground -->
     <div id="ground"></div>
     
-    <!-- Game Canvas -->
     <canvas id="gameCanvas"></canvas>
     
-    <!-- Input Layer - captures all touch/mouse input -->
     <div id="inputLayer"></div>
     
-    <!-- HUD -->
     <div id="hud">
         <div class="score-box">
             <div class="score-label">Bevute</div>
@@ -481,13 +689,10 @@
         </div>
     </div>
 
-    <!-- Special Mug Indicator -->
     <div id="specialIndicator">✨ GOLDEN MUG! ✨</div>
 
-    <!-- Mute Button -->
     <button id="muteBtn" aria-label="Toggle Sound">🔊</button>
     
-    <!-- Start Screen -->
     <div id="startScreen" class="screen">
         <div class="emoji">🍺</div>
         <h1 class="title">Beer Catcher</h1>
@@ -500,7 +705,6 @@
         </div>
     </div>
     
-    <!-- Game Over Screen -->
     <div id="gameOverScreen" class="screen hidden">
         <div class="emoji">😵</div>
         <h1 class="title">Game Over!</h1>
@@ -511,18 +715,52 @@
     </div>
 </div>
 
+<div id="pwaPrompt">
+    <span>Installa Beer Catcher sul tuo dispositivo!</span>
+    <button id="installBtn">Installa</button>
+    <button id="dismissBtn">Dopo</button>
+</div>
+
 <script>
-    // PWA: Register Service Worker
-    // Place sw.js at root directory alongside this HTML file
+    // PWA Service Worker Registration
     if ('serviceWorker' in navigator) {
         window.addEventListener('load', () => {
-            navigator.serviceWorker.register('/sw.js').then(registration => {
+            navigator.serviceWorker.register('sw.js').then(registration => {
                 console.log('SW registered:', registration);
-            }).catch(err => {
-                console.log('SW registration failed:', err);
+            }).catch(error => {
+                console.log('SW registration failed:', error);
             });
         });
     }
+
+    // PWA Install Prompt
+    let deferredPrompt;
+    const pwaPrompt = document.getElementById('pwaPrompt');
+    const installBtn = document.getElementById('installBtn');
+    const dismissBtn = document.getElementById('dismissBtn');
+
+    window.addEventListener('beforeinstallprompt', (e) => {
+        e.preventDefault();
+        deferredPrompt = e;
+        setTimeout(() => {
+            if (!window.matchMedia('(display-mode: standalone)').matches) {
+                pwaPrompt.classList.add('show');
+            }
+        }, 3000);
+    });
+
+    installBtn.addEventListener('click', async () => {
+        if (deferredPrompt) {
+            deferredPrompt.prompt();
+            const { outcome } = await deferredPrompt.userChoice;
+            deferredPrompt = null;
+            pwaPrompt.classList.remove('show');
+        }
+    });
+
+    dismissBtn.addEventListener('click', () => {
+        pwaPrompt.classList.remove('show');
+    });
 
     const canvas = document.getElementById('gameCanvas');
     const ctx = canvas.getContext('2d');
@@ -531,7 +769,7 @@
     const muteBtn = document.getElementById('muteBtn');
     const specialIndicator = document.getElementById('specialIndicator');
     
-    let gameState = 'start'; // start, playing, gameover
+    let gameState = 'start';
     let score = 0;
     let maxLives = 3;
     let currentLives = maxLives;
@@ -556,11 +794,8 @@
     let animationId = null;
     let specialMugChance = 0.08;
     let specialIndicatorTimeout = null;
-    
-    // Debug flag to verify beer array only modified in updateBeers
     let beersLastModifiedBy = null;
 
-    // Audio System using Web Audio API
     let audioCtx = null;
     let isMuted = false;
 
@@ -719,4 +954,531 @@
     function resizeCanvas() {
         const rect = container.getBoundingClientRect();
         canvas.width = rect.width;
-        canvas.
+        canvas.height = rect.height;
+        player.y = canvas.height - 120;
+        player.x = canvas.width / 2 - player.width / 2;
+        player.targetX = player.x;
+    }
+    
+    resizeCanvas();
+    window.addEventListener('resize', resizeCanvas);
+    
+    function drawPlayer(x, y) {
+        ctx.save();
+        ctx.translate(x, y);
+        
+        ctx.fillStyle = 'rgba(0,0,0,0.1)';
+        ctx.beginPath();
+        ctx.ellipse(player.width/2, player.height + 5, 35, 8, 0, 0, Math.PI * 2);
+        ctx.fill();
+        
+        ctx.fillStyle = '#4A90E2';
+        ctx.fillRect(player.width/2 - 18, 40, 14, 20);
+        ctx.fillRect(player.width/2 + 4, 40, 14, 20);
+        
+        ctx.fillStyle = '#FF6B6B';
+        ctx.fillRect(player.width/2 - 20, 20, 40, 25);
+        
+        ctx.fillStyle = '#FFD39B';
+        ctx.fillRect(player.width/2 - 28, 25, 12, 18);
+        ctx.fillRect(player.width/2 + 16, 25, 12, 18);
+        
+        ctx.fillStyle = '#D4A76A';
+        ctx.fillRect(player.width/2 + 20, 30, 8, 12);
+        ctx.fillStyle = '#FFD700';
+        ctx.fillRect(player.width/2 + 21, 31, 6, 4);
+        
+        ctx.fillStyle = '#FFD39B';
+        ctx.beginPath();
+        ctx.arc(player.width/2, 12, 16, 0, Math.PI * 2);
+        ctx.fill();
+        
+        ctx.fillStyle = '#8B4513';
+        ctx.beginPath();
+        ctx.arc(player.width/2, 8, 14, Math.PI, 0);
+        ctx.fill();
+        
+        ctx.fillStyle = '#2C3E50';
+        ctx.beginPath();
+        ctx.arc(player.width/2 - 6, 12, 2, 0, Math.PI * 2);
+        ctx.arc(player.width/2 + 6, 12, 2, 0, Math.PI * 2);
+        ctx.fill();
+        
+        ctx.strokeStyle = '#2C3E50';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(player.width/2, 14, 6, 0.2, Math.PI - 0.2);
+        ctx.stroke();
+        
+        ctx.restore();
+    }
+    
+    function drawBeer(x, y, rotation, isSpecial = false) {
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.rotate(rotation);
+        
+        ctx.fillStyle = isSpecial ? '#FFD700' : '#D4A76A';
+        ctx.fillRect(-12, -18, 24, 36);
+        
+        ctx.fillStyle = isSpecial ? '#FFEB3B' : '#FFD700';
+        ctx.fillRect(-10, -10, 20, 26);
+        
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillRect(-10, -16, 20, 8);
+        
+        ctx.fillStyle = '#FFFFFF';
+        ctx.beginPath();
+        ctx.arc(-6, -18, 4, 0, Math.PI * 2);
+        ctx.arc(0, -19, 5, 0, Math.PI * 2);
+        ctx.arc(6, -18, 4, 0, Math.PI * 2);
+        ctx.fill();
+        
+        ctx.fillStyle = isSpecial ? '#FFA000' : '#D4A76A';
+        ctx.beginPath();
+        ctx.arc(12, 0, 8, -Math.PI/2, Math.PI/2);
+        ctx.arc(12, 0, 4, Math.PI/2, -Math.PI/2, true);
+        ctx.closePath();
+        ctx.fill();
+        
+        if (isSpecial) {
+            ctx.fillStyle = '#FF6B6B';
+            ctx.font = 'bold 14px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('★', 0, 0);
+        }
+        
+        ctx.restore();
+    }
+    
+    class Particle {
+        constructor(x, y, color, sizeMultiplier = 1) {
+            this.x = x;
+            this.y = y;
+            this.vx = (Math.random() - 0.5) * 8;
+            this.vy = (Math.random() - 0.5) * 8 - 2;
+            this.size = (Math.random() * 6 + 2) * sizeMultiplier;
+            this.color = color;
+            this.life = 1;
+            this.decay = 0.02 + Math.random() * 0.02;
+        }
+        
+        update() {
+            this.x += this.vx;
+            this.y += this.vy;
+            this.vy += 0.3;
+            this.life -= this.decay;
+            this.size *= 0.98;
+        }
+        
+        draw() {
+            ctx.save();
+            ctx.globalAlpha = this.life;
+            ctx.fillStyle = this.color;
+            ctx.beginPath();
+            ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+        }
+    }
+    
+    function createParticles(x, y, color, count = 15, sizeMultiplier = 1) {
+        for (let i = 0; i < count; i++) {
+            particles.push(new Particle(x, y, color, sizeMultiplier));
+        }
+    }
+    
+    class Beer {
+        constructor(isSpecial = false) {
+            this.width = 24;
+            this.height = 36;
+            this.x = Math.random() * (canvas.width - this.width);
+            this.y = -this.height;
+            this.rotation = 0;
+            this.rotationSpeed = (Math.random() - 0.5) * 0.1;
+            this.caught = false;
+            this.broke = false;
+            this.isSpecial = isSpecial;
+        }
+        
+        update() {
+            if (this.caught || this.broke) return;
+            this.y += currentSpeed;
+            this.rotation += this.rotationSpeed;
+        }
+        
+        draw() {
+            if (this.caught || this.broke) return;
+            drawBeer(this.x + this.width/2, this.y + this.height/2, this.rotation, this.isSpecial);
+        }
+        
+        collides(player) {
+            if (this.caught || this.broke) return false;
+            const p = player.colliderPadding;
+            return this.x < player.x + player.width - p &&
+                   this.x + this.width > player.x + p &&
+                   this.y < player.y + player.height - p &&
+                   this.y + this.height > player.y + p;
+        }
+    }
+    
+    function spawnBeer() {
+        const now = Date.now();
+        if (now - lastBeerSpawn > beerSpawnInterval) {
+            const isSpecial = Math.random() < specialMugChance && currentLives < maxLives;
+            beers.push(new Beer(isSpecial));
+            beersLastModifiedBy = 'spawnBeer';
+            
+            if (isSpecial) {
+                showSpecialIndicator();
+            }
+            
+            lastBeerSpawn = now;
+            beerSpawnInterval = Math.max(600, BASE_SPAWN_INTERVAL - score * 20);
+        }
+    }
+    
+    function showSpecialIndicator() {
+        specialIndicator.classList.add('show');
+        clearTimeout(specialIndicatorTimeout);
+        specialIndicatorTimeout = setTimeout(() => {
+            specialIndicator.classList.remove('show');
+        }, 2000);
+    }
+    
+    function updatePlayer() {
+        if (keys.left) player.targetX -= 8;
+        if (keys.right) player.targetX += 8;
+        
+        player.x += (player.targetX - player.x) * player.speed;
+        player.x = Math.max(0, Math.min(canvas.width - player.width, player.x));
+        player.targetX = Math.max(0, Math.min(canvas.width - player.width, player.targetX));
+    }
+    
+    function updateLivesDisplay() {
+        document.getElementById('lives').textContent = `${currentLives}/${maxLives}`;
+        const livesBox = document.querySelectorAll('.score-box')[1];
+        
+        if (currentLives < maxLives) {
+            livesBox.classList.add('glow');
+        } else {
+            livesBox.classList.remove('glow');
+        }
+    }
+    
+    function updateBeers() {
+        const initialLength = beers.length;
+        
+        for (let i = beers.length - 1; i >= 0; i--) {
+            const beer = beers[i];
+            beer.update();
+            
+            if (!beer.caught && !beer.broke && beer.collides(player)) {
+                beer.caught = true;
+                score++;
+                beersLastModifiedBy = 'updateBeers:collision';
+                
+                if (beer.isSpecial) {
+                    playPowerUpJingle();
+                    if (currentLives < maxLives) {
+                        currentLives++;
+                        updateLivesDisplay();
+                    }
+                    createParticles(beer.x + beer.width/2, beer.y + beer.height/2, '#FFD700', 30, 1.5);
+                    createParticles(beer.x + beer.width/2, beer.y + beer.height/2, '#FF6B6B', 15, 1.2);
+                    createParticles(player.x + player.width/2, player.y, '#4ECDC4', 12);
+                } else {
+                    playGulpSound();
+                    createParticles(beer.x + beer.width/2, beer.y + beer.height/2, '#FFD700', 12);
+                    createParticles(player.x + player.width/2, player.y, '#4ECDC4', 8);
+                }
+                
+                if (score % 10 === 0) {
+                    currentSpeed *= 1.05;
+                    beerSpawnInterval *= 0.95;
+                    document.getElementById('level').textContent = (currentSpeed / baseSpeed).toFixed(1) + 'x';
+                    
+                    const scoreBox = document.querySelectorAll('.score-box')[0];
+                    scoreBox.classList.add('pop');
+                    setTimeout(() => scoreBox.classList.remove('pop'), 200);
+                }
+                
+                document.getElementById('score').textContent = score;
+                beers.splice(i, 1);
+                continue;
+            }
+            
+            if (!beer.caught && !beer.broke && beer.y + beer.height > canvas.height - 60) {
+                beer.broke = true;
+                beersLastModifiedBy = 'updateBeers:ground';
+                
+                if (beer.isSpecial) {
+                    createParticles(beer.x + beer.width/2, canvas.height - 60, '#FFD700', 20);
+                    createParticles(beer.x + beer.width/2, canvas.height - 60, '#FFEB3B', 15);
+                } else {
+                    currentLives--;
+                    playBreakSound();
+                    createParticles(beer.x + beer.width/2, canvas.height - 60, '#FF6B6B', 25);
+                    createParticles(beer.x + beer.width/2, canvas.height - 60, '#D4A76A', 15);
+                    
+                    updateLivesDisplay();
+                    
+                    const livesBox = document.querySelectorAll('.score-box')[1];
+                    livesBox.classList.add('pop');
+                    setTimeout(() => livesBox.classList.remove('pop'), 200);
+                }
+                
+                if (currentLives <= 0) {
+                    gameOver();
+                    return;
+                }
+                
+                beers.splice(i, 1);
+                continue;
+            }
+            
+            if (beer.y > canvas.height) {
+                beers.splice(i, 1);
+                beersLastModifiedBy = 'updateBeers:cleanup';
+            }
+        }
+    }
+    
+    function updateParticles() {
+        for (let i = particles.length - 1; i >= 0; i--) {
+            particles[i].update();
+            if (particles[i].life <= 0) {
+                particles.splice(i, 1);
+            }
+        }
+    }
+    
+    function draw() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        drawPlayer(player.x, player.y);
+        beers.forEach(beer => beer.draw());
+        particles.forEach(p => p.draw());
+    }
+    
+    function gameLoop() {
+        if (gameState !== 'playing') return;
+        
+        updatePlayer();
+        spawnBeer();
+        updateBeers();
+        updateParticles();
+        draw();
+        
+        animationId = requestAnimationFrame(gameLoop);
+    }
+    
+    function resetGameState() {
+        if (animationId) {
+            cancelAnimationFrame(animationId);
+            animationId = null;
+        }
+        score = 0;
+        currentLives = maxLives;
+        baseSpeed = BASE_SPEED;
+        currentSpeed = BASE_SPEED;
+        beerSpawnInterval = BASE_SPAWN_INTERVAL;
+        beers = [];
+        beersLastModifiedBy = 'resetGameState';
+        particles = [];
+        lastBeerSpawn = 0;
+        player.x = canvas.width / 2 - player.width / 2;
+        player.targetX = player.x;
+        keys.left = false;
+        keys.right = false;
+    }
+    
+    function startGame() {
+        initAudio();
+        resetGameState();
+        gameState = 'playing';
+        
+        document.getElementById('score').textContent = '0';
+        updateLivesDisplay();
+        document.getElementById('level').textContent = '1x';
+        document.getElementById('startScreen').classList.add('hidden');
+        document.getElementById('gameOverScreen').classList.add('hidden');
+        specialIndicator.classList.remove('show');
+        
+        gameLoop();
+    }
+    
+    function gameOver() {
+        gameState = 'gameover';
+        if (animationId) {
+            cancelAnimationFrame(animationId);
+            animationId = null;
+        }
+        document.getElementById('finalScore').textContent = score + ' Bevute';
+        document.getElementById('finalLives').textContent = currentLives + '/' + maxLives + ' Vite';
+        document.getElementById('gameOverScreen').classList.remove('hidden');
+    }
+    
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'ArrowLeft') {
+            keys.left = true;
+            e.preventDefault();
+        }
+        if (e.key === 'ArrowRight') {
+            keys.right = true;
+            e.preventDefault();
+        }
+        if (e.key === ' ' && gameState === 'start') {
+            startGame();
+        }
+        if (e.key === ' ' && gameState === 'gameover') {
+            startGame();
+        }
+        if (e.key === 'm' || e.key === 'M') {
+            muteBtn.click();
+        }
+    });
+    
+    document.addEventListener('keyup', (e) => {
+        if (e.key === 'ArrowLeft') keys.left = false;
+        if (e.key === 'ArrowRight') keys.right = false;
+    });
+    
+    let isDragging = false;
+    let touchActiveId = null;
+    
+    function getTouchFromEvent(e) {
+        if (touchActiveId !== null) {
+            for (let i = 0; i < e.touches.length; i++) {
+                if (e.touches[i].identifier === touchActiveId) {
+                    return e.touches[i];
+                }
+            }
+        }
+        return e.touches[0] || null;
+    }
+    
+    function updatePlayerFromTouch(clientX) {
+        if (gameState !== 'playing') return;
+        const rect = inputLayer.getBoundingClientRect();
+        const x = clientX - rect.left;
+        player.targetX = x - player.width / 2;
+    }
+    
+    inputLayer.addEventListener('touchstart', (e) => {
+        if (gameState !== 'playing') return;
+        e.preventDefault();
+        const touch = e.touches[0];
+        if (touch) {
+            isDragging = true;
+            touchActiveId = touch.identifier;
+            updatePlayerFromTouch(touch.clientX);
+        }
+    }, { passive: false });
+    
+    inputLayer.addEventListener('touchmove', (e) => {
+        if (!isDragging || gameState !== 'playing') return;
+        e.preventDefault();
+        const touch = getTouchFromEvent(e);
+        if (touch) {
+            updatePlayerFromTouch(touch.clientX);
+        }
+    }, { passive: false });
+    
+    inputLayer.addEventListener('touchend', (e) => {
+        if (gameState !== 'playing') return;
+        e.preventDefault();
+        let activeTouchEnded = true;
+        for (let i = 0; i < e.touches.length; i++) {
+            if (e.touches[i].identifier === touchActiveId) {
+                activeTouchEnded = false;
+                break;
+            }
+        }
+        if (activeTouchEnded) {
+            isDragging = false;
+            touchActiveId = null;
+        }
+    }, { passive: false });
+    
+    inputLayer.addEventListener('touchcancel', (e) => {
+        if (gameState !== 'playing') return;
+        e.preventDefault();
+        isDragging = false;
+        touchActiveId = null;
+    }, { passive: false });
+    
+    let isMouseDown = false;
+    
+    inputLayer.addEventListener('mousedown', (e) => {
+        if (gameState !== 'playing') return;
+        isMouseDown = true;
+        const rect = inputLayer.getBoundingClientRect();
+        player.targetX = e.clientX - rect.left - player.width / 2;
+    });
+    
+    inputLayer.addEventListener('mousemove', (e) => {
+        if (!isMouseDown || gameState !== 'playing') return;
+        const rect = inputLayer.getBoundingClientRect();
+        player.targetX = e.clientX - rect.left - player.width / 2;
+    });
+    
+    inputLayer.addEventListener('mouseup', () => {
+        isMouseDown = false;
+    });
+    
+    inputLayer.addEventListener('mouseleave', () => {
+        isMouseDown = false;
+    });
+    
+    document.getElementById('startBtn').addEventListener('click', startGame);
+    document.getElementById('restartBtn').addEventListener('click', startGame);
+    
+    draw();
+</script>
+
+<!--
+Create these 2 files separately for PWA to work:
+
+manifest.json:
+{
+  "name": "Beer Catcher Game",
+  "short_name": "Beer Catcher",
+  "description": "Prendi le birre che cadono! Un gioco arcade divertente.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#87CEEB",
+  "theme_color": "#f59e0b",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
+
+sw.js:
+const CACHE_NAME = 'beer-catcher-v1';
+const urlsToCache = ['/'];
+
+self.addEventListener('install', event => {
+  event.waitUntil(
+    caches.open(CACHE_NAME).then(cache => cache.addAll(urlsToCache))
+  );
+});
+
+self.addEventListener('fetch', event => {
+  event.respondWith(
+    caches.match(event.request).then(response => response || fetch(event.request))
+  );
+});
+-->
+</body>
+</html>
